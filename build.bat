@@ -1,0 +1,1 @@
+clang  -std=c++20 src/main.cc -I include/ -I C:\VulkanSDK\1.3.250.1\Include -L C:\VulkanSDK\1.3.250.1\Lib -L lib/ -l glfw3_mt.lib -l vulkan-1.lib -l gdi32.lib -l user32.lib -l shell32.lib -g 
