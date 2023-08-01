@@ -16,7 +16,7 @@ const uint32_t window_height = 1080;
 // vulkan specifics
 
 const std::vector<const char*> enabled_validation_layers = {
-	"VK_LAYER_CHRONOS_validation"
+	"VK_LAYER_KHRONOS_validation"
 };
 
 std::vector<const char*> enabled_extensions=  {};
@@ -73,6 +73,7 @@ static bool check_validation_layer_support(const std::vector<const char*>& valid
 		bool layer_found = false;
 		for (const auto& layer_properties: available_layers)
 		{
+			fmt::print("supported layer: {}\n", layer_properties.layerName);
 			if (strcmp(layer_name, layer_properties.layerName) == 0)
 			{
 				layer_found = true;
@@ -192,7 +193,6 @@ int main()
 		populate_DebugMessengerCreateInfo(debug_create_info);
 		create_info.pNext = (VkDebugUtilsMessengerCreateInfoEXT*)&debug_create_info;
 	}
-
 
 	assert_with_message(enable_validation_layers && !check_validation_layer_support(enabled_validation_layers), "validation layers requested but are not available.");
 	VkResult result = vkCreateInstance(&create_info, nullptr, &vk_instance);
