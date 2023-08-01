@@ -196,7 +196,8 @@ int main()
 
 	assert_with_message(enable_validation_layers && !check_validation_layer_support(enabled_validation_layers), "validation layers requested but are not available.");
 	VkResult result = vkCreateInstance(&create_info, nullptr, &vk_instance);
-	assert_with_message(result != VK_SUCCESS, "vkCreateInstance failed.");
+
+	assert_with_message(result == VK_SUCCESS, "vkCreateInstance failed.");
 
 	VkDebugUtilsMessengerEXT debug_messenger;
 	if (enable_validation_layers)
@@ -208,7 +209,7 @@ int main()
 		if (func != nullptr)
 		{
 			VkResult create_debug_result = func(vk_instance, &create_info, nullptr, &debug_messenger);
-			assert_with_message(create_debug_result != VK_SUCCESS, "vkCreateDebugUtilsMessengerEXT failed.\n");
+			assert_with_message(create_debug_result == VK_SUCCESS, "vkCreateDebugUtilsMessengerEXT failed.\n");
 		}
 		else
 		{

@@ -2,6 +2,11 @@
 
 if we look at the avaiable validation layers, it seems that we do not have the validation layer at this moment?
 
+I launched the Vulkan configurator and launched my executable and hijacked the validation layers, and from that point onward,
+the other validation layers are available. It seems there is something weird going on with the registry(????????).
+
+I do not know how other people fix this on console (are environment variables available there?)
+
 
 
 # Lessons Learned
