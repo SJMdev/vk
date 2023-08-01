@@ -41,11 +41,6 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(
 	return VK_FALSE;
 }
 
-
-
-
-
-
 void on_key_pressed(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
     if (action == GLFW_PRESS) {
@@ -93,6 +88,20 @@ static bool check_validation_layer_support(const std::vector<const char*>& valid
 	return false;
 }
 
+static void populate_DebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& create_info)
+{
+	create_info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+	create_info.messageSeverity = 
+		VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
+		VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+		VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+	create_info.messageType =  VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+		VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+		VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+	create_info.pfnUserCallback = debug_callback;
+	create_info.pUserData = nullptr;
+}
+
 
 
 #define assert_with_message(condition, message) \
@@ -119,7 +128,7 @@ int main()
     	glfwSetKeyCallback(main_window, on_key_pressed);
 
 
-		// get glfw extension count and required extensions.
+		// get glfw extension count and required extensions for vk.
 		glfw_required_extensions = glfwGetRequiredInstanceExtensions(&glfw_extension_count);
 		fmt::print("[glfw] required extension count: {}. Required extensions are: \n", glfw_extension_count);
 		for (size_t idx = 0; idx != glfw_extension_count; ++idx)
@@ -128,8 +137,7 @@ int main()
 		}
 	}
 
-
-	// vk extension stuff.
+	// enable vk extensions 
 	{
 		uint32_t extension_count = 0;
 		vkEnumerateInstanceExtensionProperties(nullptr, &extension_count, nullptr);
@@ -176,25 +184,26 @@ int main()
 	create_info.enabledExtensionCount = static_cast<uint32_t>(enabled_extensions.size());
 	create_info.ppEnabledExtensionNames= enabled_extensions.data();
 
+
+	// set up debug messenger if we have validation layers on.
+	VkDebugUtilsMessengerCreateInfoEXT debug_create_info{}; 
+	if (enable_validation_layers)
+	{
+		populate_DebugMessengerCreateInfo(debug_create_info);
+		create_info.pNext = (VkDebugUtilsMessengerCreateInfoEXT*)&debug_create_info;
+	}
+
+
 	assert_with_message(enable_validation_layers && !check_validation_layer_support(enabled_validation_layers), "validation layers requested but are not available.");
 	VkResult result = vkCreateInstance(&create_info, nullptr, &vk_instance);
 	assert_with_message(result != VK_SUCCESS, "vkCreateInstance failed.");
 
-	// set up debug messenger if we have validation layers on.
 	VkDebugUtilsMessengerEXT debug_messenger;
 	if (enable_validation_layers)
 	{
 		VkDebugUtilsMessengerCreateInfoEXT create_info{};
-		create_info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
-		create_info.messageSeverity = 
-			VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
-			VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
-			VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
-		create_info.messageType =  VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
-			VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
-			VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
-		create_info.pfnUserCallback = debug_callback;
-		create_info.pUserData = nullptr;
+		populate_DebugMessengerCreateInfo(create_info);
+
 		auto func = (PFN_vkCreateDebugUtilsMessengerEXT)(vkGetInstanceProcAddr(vk_instance, "vkCreateDebugUtilsMessengerEXT")); // does the instance need to exist at this point in time?
 		if (func != nullptr)
 		{
@@ -206,7 +215,6 @@ int main()
 			assert_with_message(func == nullptr,"could not find function vkCreateDebugUtilsMessengerEXT");
 		}
 	}
-
 
 
 	while (!glfwWindowShouldClose(main_window))
