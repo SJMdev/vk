@@ -8,6 +8,11 @@ the other validation layers are available. It seems there is something weird goi
 I do not know how other people fix this on console (are environment variables available there?)
 
 
+# setup
+- Install vulkan SDK
+- point to the correct path in the build.bat script.
+- you should be g2g!
+
 
 # Lessons Learned
  

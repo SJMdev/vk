@@ -1,5 +1,8 @@
+#define VK_USE_PLATFORM_WIN32_KHR
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
 #define FMT_HEADER_ONLY
 #include <fmt/core.h> 
 #include <glm/glm.hpp>
@@ -158,7 +161,6 @@ int main()
 	}
 	enabled_extensions = extensions;
 
-
 	VkInstance vk_instance{};
 	VkApplicationInfo app_info{};
 	app_info.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO; // reflection?
@@ -168,10 +170,10 @@ int main()
 	app_info.engineVersion = VK_MAKE_VERSION(1,0,0);
 	app_info.apiVersion = VK_API_VERSION_1_0;
 
+	// setup validation layers
 	VkInstanceCreateInfo create_info{};
 	create_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
 	create_info.pApplicationInfo = &app_info;
-	// setup validation layers
 	if (enable_validation_layers) 
 	{
 		create_info.enabledLayerCount = static_cast<uint32_t>(enabled_validation_layers.size());
@@ -179,7 +181,7 @@ int main()
 	}
 	else
 	{
-		create_info.enabledLayerCount = 0;
+		create_info.enabledLayerCount = 0; 
 	}
 	// set up extension count.
 	create_info.enabledExtensionCount = static_cast<uint32_t>(enabled_extensions.size());
@@ -194,12 +196,12 @@ int main()
 		create_info.pNext = (VkDebugUtilsMessengerCreateInfoEXT*)&debug_create_info;
 	}
 
-	assert_with_message(enable_validation_layers && !check_validation_layer_support(enabled_validation_layers), "validation layers requested but are not available.");
+	assert_with_message(enable_validation_layers && !check_validation_layer_support(enabled_validation_layers), "[vk] validation layers requested but are not available.");
 	VkResult result = vkCreateInstance(&create_info, nullptr, &vk_instance);
+	assert_with_message(result == VK_SUCCESS, "[vk] vkCreateInstance failed.");
 
-	assert_with_message(result == VK_SUCCESS, "vkCreateInstance failed.");
 
-	VkDebugUtilsMessengerEXT debug_messenger;
+	VkDebugUtilsMessengerEXT debug_messenger{};
 	if (enable_validation_layers)
 	{
 		VkDebugUtilsMessengerCreateInfoEXT create_info{};
@@ -213,9 +215,149 @@ int main()
 		}
 		else
 		{
-			assert_with_message(func == nullptr,"could not find function vkCreateDebugUtilsMessengerEXT");
+			assert_with_message(func == nullptr,"[vk] could not find function vkCreateDebugUtilsMessengerEXT");
 		}
 	}
+
+	VkSurfaceKHR surface{};
+	VkWin32SurfaceCreateInfoKHR surface_create_info{};
+	{
+		surface_create_info.sType =  VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
+		surface_create_info.hwnd = glfwGetWin32Window(main_window);
+		surface_create_info.hinstance = GetModuleHandle(nullptr);
+
+		auto result = vkCreateWin32SurfaceKHR(vk_instance, &surface_create_info, nullptr, &surface);
+		assert_with_message(result == VK_SUCCESS, "[vk][ Failed to vkCreateWin32SurfaceKHR.");
+	}
+
+	// glfw actually create the window surface
+	{
+		auto result = glfwCreateWindowSurface(vk_instance, main_window, nullptr, &surface);
+		assert_with_message(result == VK_SUCCESS, "[glfw] failed to create a window surface.");
+	}
+
+	// we have an instance with validation layers and a debug messenger.
+
+
+
+	// physical device
+	VkPhysicalDevice physical_device = VK_NULL_HANDLE;
+	{
+		uint32_t device_count = 0;
+		vkEnumeratePhysicalDevices(vk_instance, &device_count, nullptr);
+		assert_with_message(device_count > 0, "[vk] failed to find any GPU with vulkan support.");
+
+		std::vector<VkPhysicalDevice> devices(device_count);
+
+		vkEnumeratePhysicalDevices(vk_instance, &device_count, devices.data());
+		// do we have any suitable devices?
+		//@FIXME(SJM): we do not distinguish between multiple devices here. we 
+		for (const auto& device: devices)
+		{
+			VkPhysicalDeviceProperties device_properties{};
+			vkGetPhysicalDeviceProperties(device, &device_properties);
+			VkPhysicalDeviceFeatures device_features{};
+			vkGetPhysicalDeviceFeatures(device, &device_features);
+
+			bool device_is_suitable = (device_properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) && device_features.geometryShader;
+			fmt::print("[vk] found suitable device: {}\n", device_is_suitable);
+			if (device_is_suitable) physical_device = device;
+		}
+
+	}
+
+	// which queue families are supported?
+	// -1 is sentinel value.
+	struct queue_family_indices_t {
+		uint32_t graphics_family = -1; 
+		uint32_t present_family = -1;
+	};
+
+	auto queue_family_indices_is_complete = [](queue_family_indices_t& indices) -> bool 
+	{
+		return (indices.graphics_family != -1  && indices.present_family != -1);
+	};
+
+	queue_family_indices_t indices;
+	{
+		uint32_t queue_family_count = 0;
+		vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, nullptr);
+
+		std::vector<VkQueueFamilyProperties> queue_families(queue_family_count);
+		vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, queue_families.data());
+
+
+		for (size_t idx = 0; idx != queue_family_count; ++idx)
+		{
+			if (queue_families[idx].queueFlags & VK_QUEUE_GRAPHICS_BIT)
+			{
+				indices.graphics_family = idx;
+			}
+
+			VkBool32 present_support = false;
+			vkGetPhysicalDeviceSurfaceSupportKHR(physical_device, idx, surface, &present_support);
+
+			if (present_support)
+			{
+				indices.present_family = idx;
+			}
+
+			if (queue_family_indices_is_complete(indices))
+			{
+				break;
+			}
+
+		}
+		assert_with_message(indices.graphics_family != -1, "we did not actually find any queues that have the graphics bit set.");
+
+		// also get the present support.
+	}
+	
+	VkDevice device{}; // "logical" device
+	{
+		VkDeviceQueueCreateInfo queue_create_info{};
+		queue_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+		queue_create_info.queueFamilyIndex = indices.graphics_family;
+		queue_create_info.queueCount = 1;
+		float queue_priority = 1.0f;
+		queue_create_info.pQueuePriorities = &queue_priority;
+
+		VkPhysicalDeviceFeatures device_features{}; // default 0 for now.
+		VkDeviceCreateInfo device_create_info{};
+		device_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+
+		device_create_info.pQueueCreateInfos = &queue_create_info;
+		device_create_info.queueCreateInfoCount = 1;
+		device_create_info.pEnabledFeatures= &device_features;
+
+		// this is not strictly necessary apparently but we do it anyway(?)
+		device_create_info.enabledExtensionCount = 0;
+		if (enable_validation_layers)
+		{
+			device_create_info.enabledLayerCount = static_cast<uint32_t>(enabled_validation_layers.size());
+			device_create_info.ppEnabledLayerNames = enabled_validation_layers.data();
+		} else 
+		{
+			device_create_info.enabledLayerCount = 0;
+		}
+
+		// create the presentation queue and retrieve the VkQueue handle.
+
+		auto result = vkCreateDevice(physical_device, &device_create_info, nullptr, &device);
+		assert_with_message(result == VK_SUCCESS, "[vk] Failed to create logical device.");
+		fmt::print("[vk] created logical device.\n");
+	}
+
+	VkQueue graphics_queue{};
+	{
+		vkGetDeviceQueue(device, indices.graphics_family, 0, &graphics_queue);
+	}
+	VkQueue present_queue{};
+	{
+		vkGetDeviceQueue(device, indices.present_family, 0, &present_queue);
+	}
+
+
 
 
 	while (!glfwWindowShouldClose(main_window))
@@ -233,9 +375,12 @@ int main()
 		}
 		else
 		{
-			assert_with_message(func == nullptr, "could not find vkDestroyDebugUtilsMessengerEXT.");
+			assert_with_message(func == nullptr, "[vk] could not find vkDestroyDebugUtilsMessengerEXT.");
 		}
 	}
+
+	// destroy the surface.
+	vkDestroySurfaceKHR(vk_instance, surface, nullptr);
 
 	// destroy instance
 	vkDestroyInstance(vk_instance, nullptr);
