@@ -11,6 +11,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <vector>
+#include <set>
 
 // window specifics
 const uint32_t window_width = 1920;
@@ -23,6 +24,12 @@ const std::vector<const char*> enabled_validation_layers = {
 };
 
 std::vector<const char*> enabled_extensions=  {};
+
+
+
+const std::vector<const char*> enabled_physical_device_extensions = {
+	VK_KHR_SWAPCHAIN_EXTENSION_NAME;
+};
 
 #ifdef NDEBUG
 	const bool enable_validation_layers= false;
@@ -236,33 +243,52 @@ int main()
 		assert_with_message(result == VK_SUCCESS, "[glfw] failed to create a window surface.");
 	}
 
-	// we have an instance with validation layers and a debug messenger.
+	// --> we have an instance with validation layers and a debug messenger.
 
 
 
 	// physical device
 	VkPhysicalDevice physical_device = VK_NULL_HANDLE;
 	{
+		// get all physical devices.
 		uint32_t device_count = 0;
 		vkEnumeratePhysicalDevices(vk_instance, &device_count, nullptr);
 		assert_with_message(device_count > 0, "[vk] failed to find any GPU with vulkan support.");
-
 		std::vector<VkPhysicalDevice> devices(device_count);
-
 		vkEnumeratePhysicalDevices(vk_instance, &device_count, devices.data());
+
+
 		// do we have any suitable devices?
-		//@FIXME(SJM): we do not distinguish between multiple devices here. we 
+		//@FIXME(SJM): we do not distinguish between multiple devices here.
 		for (const auto& device: devices)
 		{
+			// do we have discrete gpu and geometry shader support?
 			VkPhysicalDeviceProperties device_properties{};
 			vkGetPhysicalDeviceProperties(device, &device_properties);
 			VkPhysicalDeviceFeatures device_features{};
 			vkGetPhysicalDeviceFeatures(device, &device_features);
+			bool device_has_discrete_gpu_and_geometry_shader = (device_properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) && device_features.geometryShader;
 
-			bool device_is_suitable = (device_properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) && device_features.geometryShader;
+
+			//what extensions do we have?
+			uint32_t extension_count{};
+			vkEnumerateDeviceExtensionProperties(device, nullptr, &extension_count, nullptr);
+			std::vector<VkExtensionProperties> available_extensions{extension_count};
+			vkEnumerateDeviceExtensionProperties(device, nullptr, extension_count, available_extensions.data());
+
+			std::set<std::string> required_physical_device_extensions(enabled_physical_device_extensions.begin(), enabled_physical_device_extensions.end());
+
+			for (const auto& extension: available_extensions)
+			{
+				required_physical_device_extensions.erase(extension.extensionName);
+			}
+			bool device_has_required_extensions = required_physical_device_extensions.empty();
+
+			bool device_is_suitable = device_has_discrete_gpu_and_geometry_shader && device_has_required_extensions;
 			fmt::print("[vk] found suitable device: {}\n", device_is_suitable);
 			if (device_is_suitable) physical_device = device;
 		}
+
 
 	}
 
@@ -315,23 +341,14 @@ int main()
 	
 	VkDevice device{}; // "logical" device
 	{
-		VkDeviceQueueCreateInfo queue_create_info{};
-		queue_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-		queue_create_info.queueFamilyIndex = indices.graphics_family;
-		queue_create_info.queueCount = 1;
-		float queue_priority = 1.0f;
-		queue_create_info.pQueuePriorities = &queue_priority;
-
-		VkPhysicalDeviceFeatures device_features{}; // default 0 for now.
 		VkDeviceCreateInfo device_create_info{};
 		device_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-
-		device_create_info.pQueueCreateInfos = &queue_create_info;
-		device_create_info.queueCreateInfoCount = 1;
-		device_create_info.pEnabledFeatures= &device_features;
-
-		// this is not strictly necessary apparently but we do it anyway(?)
 		device_create_info.enabledExtensionCount = 0;
+
+		VkPhysicalDeviceFeatures device_features{}; // default 0 for now.
+		device_create_info.pEnabledFeatures= &device_features;
+		// this is not strictly necessary apparently but we do it anyway(?)
+		
 		if (enable_validation_layers)
 		{
 			device_create_info.enabledLayerCount = static_cast<uint32_t>(enabled_validation_layers.size());
@@ -342,10 +359,28 @@ int main()
 		}
 
 		// create the presentation queue and retrieve the VkQueue handle.
+		std::vector<VkDeviceQueueCreateInfo> queue_create_infos{};
+		std::set<uint32_t> unique_queue_families = {indices.graphics_family, indices.present_family};
+
+		float queue_priority = 1.0f;
+		for (auto queue_family: unique_queue_families)
+		{
+			VkDeviceQueueCreateInfo queue_create_info{};
+			queue_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+			queue_create_info.queueFamilyIndex = queue_family;
+			queue_create_info.queueCount = 1;
+			queue_create_info.pQueuePriorities = &queue_priority;
+			queue_create_infos.push_back(queue_create_info);
+		}
+
+		device_create_info.queueCreateInfoCount = static_cast<uint32_t>(queue_create_infos.size());
+		device_create_info.pQueueCreateInfos = queue_create_infos.data();
 
 		auto result = vkCreateDevice(physical_device, &device_create_info, nullptr, &device);
 		assert_with_message(result == VK_SUCCESS, "[vk] Failed to create logical device.");
 		fmt::print("[vk] created logical device.\n");
+
+
 	}
 
 	VkQueue graphics_queue{};
