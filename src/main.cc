@@ -26,9 +26,10 @@ const std::vector<const char*> enabled_validation_layers = {
 std::vector<const char*> enabled_extensions=  {};
 
 
-
-const std::vector<const char*> enabled_physical_device_extensions = {
-	VK_KHR_SWAPCHAIN_EXTENSION_NAME;
+// we use these to check per physical device if they are indeed supported.
+// but we actually enable them through the _logical_ device creation.
+const std::vector<const char*> enabled_device_extensions = {
+	VK_KHR_SWAPCHAIN_EXTENSION_NAME
 };
 
 #ifdef NDEBUG
@@ -227,8 +228,8 @@ int main()
 	}
 
 	VkSurfaceKHR surface{};
-	VkWin32SurfaceCreateInfoKHR surface_create_info{};
 	{
+		VkWin32SurfaceCreateInfoKHR surface_create_info{};
 		surface_create_info.sType =  VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
 		surface_create_info.hwnd = glfwGetWin32Window(main_window);
 		surface_create_info.hinstance = GetModuleHandle(nullptr);
@@ -247,6 +248,8 @@ int main()
 
 
 
+
+
 	// physical device
 	VkPhysicalDevice physical_device = VK_NULL_HANDLE;
 	{
@@ -262,6 +265,7 @@ int main()
 		//@FIXME(SJM): we do not distinguish between multiple devices here.
 		for (const auto& device: devices)
 		{
+
 			// do we have discrete gpu and geometry shader support?
 			VkPhysicalDeviceProperties device_properties{};
 			vkGetPhysicalDeviceProperties(device, &device_properties);
@@ -270,13 +274,13 @@ int main()
 			bool device_has_discrete_gpu_and_geometry_shader = (device_properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) && device_features.geometryShader;
 
 
-			//what extensions do we have?
+			//what extensions are supported?
 			uint32_t extension_count{};
 			vkEnumerateDeviceExtensionProperties(device, nullptr, &extension_count, nullptr);
 			std::vector<VkExtensionProperties> available_extensions{extension_count};
 			vkEnumerateDeviceExtensionProperties(device, nullptr, extension_count, available_extensions.data());
 
-			std::set<std::string> required_physical_device_extensions(enabled_physical_device_extensions.begin(), enabled_physical_device_extensions.end());
+			std::set<std::string> required_physical_device_extensions(enabled_device_extensions.begin(), enabled_device_extensions.end());
 
 			for (const auto& extension: available_extensions)
 			{
@@ -292,20 +296,58 @@ int main()
 
 	}
 
-	// which queue families are supported?
+
+	// @NOTE(SJM): this is actually a prerequisite before deciding whether the physical device is suitable.
+	// Physical device: what swap chain capabilities are supported?
+	struct swap_chain_support_details_t
+	{
+		VkSurfaceCapabilitiesKHR capabilities;
+		std::vector<VkSurfaceFormatKHR> formats;
+		std::vector<VkPresentModeKHR> present_modes;
+	};
+
+	swap_chain_support_details_t swap_chain_support_details{};
+	{
+		vkGetPhysicalDeviceSurfaceCapabilities(physical_device, surface, &details.capabilities);
+
+		uint32_t format_count{};
+		vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &format_count, nullptr);
+		assert_with_message(format_count != 0, "[vk] vkGetPhysicalDeviceSurfaceFormatsKHR reports 0 surface formats.");
+		if (format_count != 0)
+		{
+			swap_chain_support_details.formats.resize(format_count);
+			vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &format_count, swap_chain_support_details.formats.data());
+		}
+
+		uint32_t present_mode_count{};
+		vkGetPhysicalDeviceSurfacePresentModesKHR(physical_device, surface, &present_mode_count, nullptr);
+		assert_with_message(present_mode_count != 0, "[vk] vkGetPhysicalDeviceSurfacePresentModesKHR reports 0 present modes.");
+		if (present_mode_count != 0)
+		{
+			swap_chain_support_details.present_modes.resize(present_mode_count);
+			vkGetPhysicalDeviceSurfacePresentModesKHR(physical_device, surface, &present_mode_count, swap_chain_support_details.present_modes.data()	);
+		}
+
+		assert_with_message(!swap_chain_support_details.formats.empty() && !swap_chain_support_details.present_modes.empty(), "[vk] no formats or present_modes.");
+	}
+
+
+	// @NOTE(SJM): this is actually a prerequisite before deciding whether the physical device is suitable.
+	// Physical device: which queue families are supported?
 	// -1 is sentinel value.
 	struct queue_family_indices_t {
 		uint32_t graphics_family = -1; 
 		uint32_t present_family = -1;
 	};
 
-	auto queue_family_indices_is_complete = [](queue_family_indices_t& indices) -> bool 
+	queue_family_indices_t indices; // 
 	{
-		return (indices.graphics_family != -1  && indices.present_family != -1);
-	};
+		auto queue_family_indices_is_complete = [](queue_family_indices_t& indices) -> bool 
+		{
+			return (indices.graphics_family != -1  && indices.present_family != -1);
+		};
 
-	queue_family_indices_t indices;
-	{
+
 		uint32_t queue_family_count = 0;
 		vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, nullptr);
 
@@ -323,6 +365,7 @@ int main()
 			VkBool32 present_support = false;
 			vkGetPhysicalDeviceSurfaceSupportKHR(physical_device, idx, surface, &present_support);
 
+			// also get the present support (i.e. "can we present something to a surface")
 			if (present_support)
 			{
 				indices.present_family = idx;
@@ -334,16 +377,21 @@ int main()
 			}
 
 		}
-		assert_with_message(indices.graphics_family != -1, "we did not actually find any queues that have the graphics bit set.");
-
-		// also get the present support.
+		assert_with_message(indices.graphics_family != -1, "[vk] no queues found that have VK_QUEUE_GRAPHICS_BIT set.");
+		assert_with_message(indices.present_family  != -1, "[vk] no queues found that have present support.");
 	}
 	
-	VkDevice device{}; // "logical" device
+
+
+	VkDevice device{}; // "logical" device. Note that only the logical device has extensions.
 	{
 		VkDeviceCreateInfo device_create_info{};
 		device_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-		device_create_info.enabledExtensionCount = 0;
+
+		// these extensions have been checked to be supported by the physical device.
+		device_create_info.enabledExtensionCount = static_cast<uint32_t>(enabled_extensions.size());
+		device_create_info.ppEnabledExtensionNames = enabled_ex.data();
+
 
 		VkPhysicalDeviceFeatures device_features{}; // default 0 for now.
 		device_create_info.pEnabledFeatures= &device_features;
@@ -379,8 +427,6 @@ int main()
 		auto result = vkCreateDevice(physical_device, &device_create_info, nullptr, &device);
 		assert_with_message(result == VK_SUCCESS, "[vk] Failed to create logical device.");
 		fmt::print("[vk] created logical device.\n");
-
-
 	}
 
 	VkQueue graphics_queue{};
