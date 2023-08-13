@@ -12,6 +12,8 @@
 
 #include <vector>
 #include <set>
+#include <limits> // std::numeric_limits
+#include <algorithm> // std::clamp
 
 // window specifics
 const uint32_t window_width = 1920;
@@ -247,9 +249,6 @@ int main()
 	// --> we have an instance with validation layers and a debug messenger.
 
 
-
-
-
 	// physical device
 	VkPhysicalDevice physical_device = VK_NULL_HANDLE;
 	{
@@ -329,7 +328,84 @@ int main()
 		}
 
 		assert_with_message(!swap_chain_support_details.formats.empty() && !swap_chain_support_details.present_modes.empty(), "[vk] no formats or present_modes.");
+
+		// choose the right  (swap) surface format.
+		VkSurfaceFormatKHR suitable_surface_format = {};
+		for (const auto& available_format: swap_chain_support_details.formats)
+		{
+			if (available_format.format == VK_FORMAT_B8G8R8A8_SRGB && avilable_format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+			{
+				suitable_surface_format = available_format;
+				break;
+			}
+		}
+
+		// choose the right (swap) presentation mode. default to double buffer FIFO.
+		VkPresentModeKHR suitable_present_mode = VK_PRESENT_MODE_FIFO_KHR; 
+		for (const auto& available_present_mode: swap_chain_support_details.present_modes)
+		{
+			if (available_present_mode == VK_PRESENT_MODE_MAILBOX_KHR)
+			{
+				suitable_present_mode = available_present_mode;
+			}
+		}
+
+		// choose swap extent.
+		// the swap extent is the resolution of the swap chain images and it's almost exactly equal to the resolution of the window that we're drawin to in pixels.
+		VkExtend2D suitable_swap_extent{};
+		if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max())
+		{
+			suitable_swap_extent = capabilities.currentExtent;
+
+		}
+		else 
+		{
+			int width = {};
+			int height = {};
+
+			glfwGetFrameBufferSize(window, &width, &height);
+
+			VkExtend2D actual_extent = {
+				static_Cast<uint32_t>{width},
+				static_Cast<uint32_t>{height}
+			};
+
+			actual_extent.width = std::clamp(
+				actual_extent.width,
+				capabilities.minImageExtent.width,
+				capabilities.maxImageExtent.width);
+			
+			actual_extent.height = std::clamp(
+				actual_extent.height,
+				capabilities.minImageExtent.height,
+				capabilities.maxImageExtent.height);
+
+			suitable_swap_extent = actual_extent;
+		}
+
+
+		// actually create the swap chain.
+
+		uint32_t image_count = swap_chain_support_details.capabilities.minImageCount + 1; // request 1 over minimum?
+
+		// we should not exceed max images.
+		if (swap_chain_support_details.capabilities.maxImageCount > 0 && image_count > swap_chain_support_details.capabilities.maxImageCount)
+		{
+			image_count = swap_chain_support_details.capabilities.maxImageCount;
+		}
+
+		VkSwapChainCreateInfoKHR swap_chain_create_info{};
+		swap_chain_create_info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_swap_chain_create_info_KHR;
+		swap_chain_create_info.surface = surface;
+		swap_chain_create_info.minImageCount = image_count;
+		swap_chain_create_info.imageFormat = suitable_surface_format.format;
+		swap_chain_create_info.ColorSpace = suitable_surface_format.colorSpace;
+		swap_chain_create_info.imageExtent = suitable_swap_extent;
+		swap_chain_create_info.imageArrayLayers = 1; // the amouint of layers each image consists of (always 1 unless we do stereoscopiuc 3d application?  VR?)
+		swap_chain_create_info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 	}
+
+
 
 
 	// @NOTE(SJM): this is actually a prerequisite before deciding whether the physical device is suitable.
